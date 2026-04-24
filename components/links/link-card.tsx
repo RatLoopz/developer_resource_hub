@@ -2,9 +2,8 @@
 
 import Link from "next/link"
 import { useState } from "react"
-import { ExternalLink, Trash2 } from "lucide-react"
+import { ExternalLink, Trash2, Globe } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import {
   AlertDialog,
@@ -57,64 +56,105 @@ export function LinkCard({ item, isOwner = false, isAdmin = false }: Props) {
     }
   }
 
+  // Extract clean hostname for display
+  let hostname = ""
+  try {
+    hostname = new URL(entry.url).hostname.replace("www.", "")
+  } catch { }
+
   return (
     <>
-      <Card className="h-full hover:shadow-md transition-shadow relative">
-        <CardHeader className="flex flex-row items-center gap-3">
-          <div className="relative size-10 rounded-md overflow-hidden bg-neutral-100 ring-1 ring-neutral-200">
+      <div className="group relative flex flex-col bg-white border border-neutral-200 rounded-xl p-5 hover:border-neutral-300 hover:shadow-sm transition-all duration-150">
+
+        {/* Delete button — top-right, only for owner/admin */}
+        {(isOwner || isAdmin) && (
+          <button
+            onClick={(e) => { e.preventDefault(); setShowDeleteDialog(true) }}
+            disabled={isDeleting}
+            className="absolute top-3 right-3 p-1.5 rounded-md text-neutral-300 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all duration-150"
+          >
+            <Trash2 className="size-3.5" />
+          </button>
+        )}
+
+        {/* Top row: icon + name */}
+        <div className="flex items-center gap-3 mb-3">
+          <div className="size-9 rounded-lg bg-neutral-100 overflow-hidden shrink-0 flex items-center justify-center">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={iconSrc || "/placeholder.svg"}
-              alt={`${entry.name} logo`}
-              className="size-full object-cover"
+              src={iconSrc}
+              alt={`${entry.name} icon`}
+              className="size-full object-contain p-0.5"
               crossOrigin="anonymous"
+              onError={(e) => {
+                (e.target as HTMLImageElement).src = "/placeholder.svg"
+              }}
             />
           </div>
-          <CardTitle className="text-base font-semibold flex-1">{entry.name}</CardTitle>
-          {(isOwner || isAdmin) && (
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => setShowDeleteDialog(true)}
-              disabled={isDeleting}
-              className="h-8 w-8 p-0"
-            >
-              <Trash2 className="h-4 w-4 text-red-600" />
-            </Button>
-          )}
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <p className="text-sm text-neutral-600 line-clamp-3">{entry.description}</p>
-          <div className="flex flex-wrap gap-2">
-            {entry.categories.map((c) => (
-              <Badge key={c} variant="secondary" className="bg-neutral-100 text-neutral-800">
+          <div className="min-w-0">
+            <h3 className="text-sm font-semibold text-neutral-900 truncate leading-tight">
+              {entry.name}
+            </h3>
+            <div className="flex items-center gap-1 mt-0.5">
+              <Globe className="size-3 text-neutral-300 shrink-0" />
+              <span className="text-[11px] text-neutral-400 truncate">{hostname}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Description */}
+        <p className="text-xs text-neutral-500 leading-relaxed line-clamp-2 mb-4 flex-1">
+          {entry.description}
+        </p>
+
+        {/* Bottom row: categories + visit link */}
+        <div className="flex items-center justify-between gap-2 mt-auto">
+          <div className="flex flex-wrap gap-1 min-w-0">
+            {entry.categories.slice(0, 2).map((c) => (
+              <Badge
+                key={c}
+                variant="secondary"
+                className="bg-neutral-100 text-neutral-500 border-0 text-[10px] px-2 py-0 rounded font-normal leading-5"
+              >
                 {c}
               </Badge>
             ))}
+            {entry.categories.length > 2 && (
+              <Badge
+                variant="secondary"
+                className="bg-neutral-100 text-neutral-400 border-0 text-[10px] px-2 py-0 rounded font-normal leading-5"
+              >
+                +{entry.categories.length - 2}
+              </Badge>
+            )}
           </div>
-          <div className="pt-1">
-            <Link
-              href={entry.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 text-sm font-medium text-neutral-800 hover:text-neutral-950"
-            >
-              <ExternalLink className="size-4" />
-              <span>{"Visit site"}</span>
-            </Link>
-          </div>
-        </CardContent>
-      </Card>
+
+          <Link
+            href={entry.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="shrink-0 inline-flex items-center gap-1 text-[11px] font-medium text-neutral-600 hover:text-neutral-900 transition-colors"
+            onClick={(e) => e.stopPropagation()}
+          >
+            Visit
+            <ExternalLink className="size-3" />
+          </Link>
+        </div>
+      </div>
 
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
         <AlertDialogContent>
-          <AlertDialogTitle>Delete Link</AlertDialogTitle>
+          <AlertDialogTitle>Delete &quot;{entry.name}&quot;?</AlertDialogTitle>
           <AlertDialogDescription>
-            Are you sure you want to delete "{entry.name}"? This action cannot be undone.
+            This action cannot be undone.
           </AlertDialogDescription>
           <div className="flex gap-3 justify-end">
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete} disabled={isDeleting} className="bg-red-600 hover:bg-red-700">
+            <AlertDialogAction
+              onClick={handleDelete}
+              disabled={isDeleting}
+              className="bg-red-600 hover:bg-red-700"
+            >
               {isDeleting ? "Deleting..." : "Delete"}
             </AlertDialogAction>
           </div>
