@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic';
 
 const INSTAGRAM_URL_REGEX = /https?:\/\/(www\.)?instagram\.com\/(reel|p|tv)\/[A-Za-z0-9_-]+\/?(\?[^\s]*)?/gi;
 
-// Admin Supabase client — uses service role to bypass RLS
+// Admin Supabase client — bypasses RLS (bot has no user session)
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!,
@@ -29,9 +29,7 @@ async function sendTelegramMessage(chatId: number, text: string) {
 
 async function fetchReelMeta(url: string) {
   try {
-    const res = await fetch(
-      `https://api.microlink.io?url=${encodeURIComponent(url)}`
-    );
+    const res = await fetch(`https://api.microlink.io?url=${encodeURIComponent(url)}`);
     const data = await res.json();
     if (data.status === "success") {
       return {
@@ -39,86 +37,126 @@ async function fetchReelMeta(url: string) {
         thumbnail_url: data.data.image?.url || null,
       };
     }
-  } catch (err) {
-    console.error("Error fetching reel meta:", err);
-  }
+  } catch {}
   return { title: "Instagram Reel", thumbnail_url: null };
 }
 
+// ─── Find user by telegram_id ────────────────────────────────
+async function getUserByTelegramId(telegramId: string) {
+  const { data } = await supabaseAdmin
+    .from("profiles")
+    .select("id, full_name, email")
+    .eq("telegram_id", telegramId)
+    .single();
+  return data;
+}
+
+// ─── Link telegram account using token ──────────────────────
+async function linkTelegramAccount(token: string, telegramId: string, telegramName: string) {
+  // Find profile with this token
+  const { data: profile } = await supabaseAdmin
+    .from("profiles")
+    .select("id, full_name, email")
+    .eq("telegram_link_token", token)
+    .single();
+
+  if (!profile) return null;
+
+  // Save telegram_id and clear the used token
+  await supabaseAdmin
+    .from("profiles")
+    .update({
+      telegram_id: telegramId,
+      telegram_link_token: null, // consume the token (one-time use)
+    })
+    .eq("id", profile.id);
+
+  return profile;
+}
+
 export async function POST(req: Request) {
-  console.log("-----------------------------------------");
-  console.log("RECEIVED TELEGRAM WEBHOOK POST REQUEST");
-  console.log("-----------------------------------------");
   try {
+    // 1. Verify Telegram secret token (prevents spoofing)
     const secretToken = req.headers.get("x-telegram-bot-api-secret-token");
-    console.log("Secret Token received:", secretToken ? "YES" : "NO");
-    
-    // 1. Secret Token check
     if (process.env.TELEGRAM_SECRET_TOKEN && secretToken !== process.env.TELEGRAM_SECRET_TOKEN) {
-      console.warn("Unauthorized webhook attempt: Secret token mismatch");
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const body = await req.json();
-    console.log("Body payload received:", JSON.stringify(body).slice(0, 100) + "...");
     const message = body?.message;
-    if (!message) {
-      console.log("No 'message' object in body. Ignoring.");
-      return NextResponse.json({ ok: true, note: "No message found" });
-    }
+    if (!message) return NextResponse.json({ ok: true });
 
     const chatId: number = message.chat.id;
-    const fromId: string = String(message.from?.id);
+    const telegramId: string = String(message.from?.id);
+    const firstName: string = message.from?.first_name || "User";
     const text: string = message.text || message.caption || "";
 
-    console.log(`From ID: ${fromId}, Chat ID: ${chatId}, Text: ${text}`);
+    console.log(`[Bot] Message from TG ID: ${telegramId}, text: ${text.slice(0, 60)}`);
 
-    // 2. Allowed User check
-    const allowedId = process.env.TELEGRAM_ALLOWED_USER_ID;
-    if (allowedId && fromId !== allowedId) {
-      console.warn(`Unauthorized user: ${fromId}. Expected: ${allowedId}`);
-      await sendTelegramMessage(chatId, "⛔ You are not authorized to use this bot.");
-      return NextResponse.json({ ok: true, note: "Unauthorized user" });
+    // ─── 2. Handle /start command ────────────────────────────
+    if (text.startsWith("/start")) {
+      const parts = text.split(" ");
+      const token = parts[1]?.trim(); // e.g., /start DRH-A1B2C3D4
+
+      if (token && token.startsWith("DRH-")) {
+        // Deep-link linking flow
+        const linked = await linkTelegramAccount(token, telegramId, firstName);
+        if (linked) {
+          await sendTelegramMessage(
+            chatId,
+            `✅ *Linked Successfully!*\n\nYour Telegram is now connected to *${linked.full_name || linked.email}*'s vault.\n\nSend any Instagram Reel link and it will be saved automatically! 🎬`
+          );
+        } else {
+          await sendTelegramMessage(
+            chatId,
+            "❌ *Invalid or Expired Token*\n\nPlease go to your Profile page and generate a new token."
+          );
+        }
+        return NextResponse.json({ ok: true });
+      }
+
+      // Normal /start without token
+      const existingUser = await getUserByTelegramId(telegramId);
+      if (existingUser) {
+        await sendTelegramMessage(
+          chatId,
+          `👋 Welcome back, *${existingUser.full_name || existingUser.email}*!\n\nYour account is already linked. Just send Instagram Reel links to save them. 🎬`
+        );
+      } else {
+        await sendTelegramMessage(
+          chatId,
+          "👋 *Welcome to Reels Vault Bot!*\n\nTo use this bot:\n\n1️⃣ Go to *developerresourcehub.vercel.app/profile*\n2️⃣ Click *'Link Telegram'*\n3️⃣ Get your unique code and send it here as:\n   `/start YOUR_CODE`\n\nOnce linked, just paste any Instagram Reel URL here! 🎬"
+        );
+      }
+      return NextResponse.json({ ok: true });
     }
 
-    // 3. Handle /start
-    if (text.startsWith("/start")) {
-      console.log("Handling /start command");
+    // ─── 3. Reel saving (for linked users) ──────────────────
+    // Check if telegram_id is linked to an account
+    const linkedUser = await getUserByTelegramId(telegramId);
+    if (!linkedUser) {
       await sendTelegramMessage(
         chatId,
-        "👋 *Reels Vault Bot*\n\nSend me any Instagram Reel link and I'll save it to your vault automatically."
+        "❗ *Account Not Linked*\n\nTo save reels, first link your account:\n1. Visit your profile on the website\n2. Click *'Link Telegram'*\n3. Send `/start YOUR_CODE` here"
       );
       return NextResponse.json({ ok: true });
     }
 
-    // 4. Extract URL
+    // ─── 4. Extract Instagram URL ────────────────────────────
     const matches = text.match(INSTAGRAM_URL_REGEX);
     if (!matches || matches.length === 0) {
-      console.log("No Instagram link found in text.");
       await sendTelegramMessage(chatId, "❓ Please send a valid Instagram Reel link.");
       return NextResponse.json({ ok: true });
     }
 
     const reelUrl = matches[0];
-    console.log("Detected Reel URL:", reelUrl);
-    await sendTelegramMessage(chatId, "⏳ Saving to your vault...");
+    await sendTelegramMessage(chatId, "⏳ _Saving to your vault..._");
 
-    // 5. Fetch Metadata
-    console.log("Fetching metadata via Microlink...");
+    // ─── 5. Fetch metadata + Insert ─────────────────────────
     const meta = await fetchReelMeta(reelUrl);
-    console.log("Metadata results:", JSON.stringify(meta));
 
-    // 6. DB Insert
-    const userId = process.env.BOT_DEFAULT_USER_ID;
-    if (!userId) {
-      console.error("CRITICAL: BOT_DEFAULT_USER_ID is not defined in env variables!");
-      await sendTelegramMessage(chatId, "❌ Setup Error: `BOT_DEFAULT_USER_ID` missing in server.");
-      return NextResponse.json({ ok: true });
-    }
-
-    console.log(`Attempting Supabase insert for user: ${userId}`);
     const { error: insertError } = await supabaseAdmin.from("reels").insert({
-      user_id: userId,
+      user_id: linkedUser.id,
       original_url: reelUrl,
       thumbnail_url: meta.thumbnail_url,
       title: meta.title,
@@ -126,58 +164,25 @@ export async function POST(req: Request) {
     });
 
     if (insertError) {
-      console.error("Supabase insert error details:", JSON.stringify(insertError));
-      await sendTelegramMessage(chatId, `❌ Database Error: ${insertError.message}`);
+      console.error("Insert error:", insertError);
+      await sendTelegramMessage(chatId, `❌ Error: ${insertError.message}`);
     } else {
-      console.log("Successfully inserted reel!");
       await sendTelegramMessage(
         chatId,
-        `✅ *Saved!*\n\n*${meta.title}*\n\n[View in Vault](${reelUrl})`
+        `✅ *Saved!*\n\n*${meta.title}*\n\n[View Reel](${reelUrl})`
       );
     }
 
-    console.log("Webhook request finished successfully.");
     return NextResponse.json({ ok: true });
   } catch (err: any) {
-    console.error("CRITICAL Webhook route error:", err);
-    return NextResponse.json({ error: "Internal Server Error", details: err.message }, { status: 500 });
+    console.error("Webhook error:", err);
+    return NextResponse.json({ error: "Internal error" }, { status: 500 });
   }
 }
 
-export async function GET(req: Request) {
-  const { searchParams } = new URL(req.url);
-  const testMode = searchParams.get("test");
-
-  if (testMode === "true") {
-    const userId = process.env.BOT_DEFAULT_USER_ID;
-    if (!userId) return NextResponse.json({ error: "BOT_DEFAULT_USER_ID missing" });
-
-    const { data, error } = await supabaseAdmin.from("reels").insert({
-      user_id: userId,
-      original_url: "https://www.instagram.com/reel/C-test-test/",
-      title: "Test Connection",
-      notes: "Self-test via URL"
-    }).select();
-
-    return NextResponse.json({ 
-      source: "Self-Test Mode",
-      env_check: {
-        has_supabase_url: !!process.env.NEXT_PUBLIC_SUPABASE_URL,
-        has_service_role: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
-        has_tg_token: !!process.env.TELEGRAM_BOT_TOKEN,
-        bot_user_id: userId
-      },
-      db_result: error ? { status: "ERROR", msg: error.message } : { status: "OK", data }
-    });
-  }
-
-  return NextResponse.json({ 
-    status: "Telegram Webhook Active", 
+export async function GET() {
+  return NextResponse.json({
+    status: "Reels Vault Bot Active (Multi-User) v3.0",
     timestamp: new Date().toISOString(),
-    env_keys_verify: {
-      tg_token_prefix: process.env.TELEGRAM_BOT_TOKEN?.slice(0, 5) + "...",
-      allowed_id: process.env.TELEGRAM_ALLOWED_USER_ID,
-      supabase_url: process.env.NEXT_PUBLIC_SUPABASE_URL
-    }
   });
 }
