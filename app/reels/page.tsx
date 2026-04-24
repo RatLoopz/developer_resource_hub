@@ -51,10 +51,14 @@ export default function ReelsPage() {
   }, []);
 
   const fetchSession = async () => {
+    // ✅ getUser() verifies with the Supabase server — never reads stale cache.
+    // getSession() was the bug: it reads from cookie/localStorage before hydration,
+    // returning null even when the user IS logged in → userId stayed null →
+    // delete button never rendered (userId === reel.user_id was always false).
     const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    if (session) setUserId(session.user.id);
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (user) setUserId(user.id);
   };
 
   const fetchReels = async () => {
@@ -268,21 +272,6 @@ export default function ReelsPage() {
                         <Play className="size-4 text-neutral-900 ml-0.5" />
                       </div>
                     </div>
-
-                    {/* Delete button (Owner only) */}
-                    {userId === reel.user_id && (
-                      <button
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          handleDelete(reel.id);
-                        }}
-                        className="absolute top-2 right-2 p-2 rounded-lg bg-white/10 hover:bg-red-500 text-white backdrop-blur-md opacity-0 group-hover:opacity-100 transition-all duration-200 shadow-sm"
-                        title="Delete Reel"
-                      >
-                        <Trash2 className="size-3.5" />
-                      </button>
-                    )}
                   </div>
 
                   {/* Info */}
@@ -315,6 +304,25 @@ export default function ReelsPage() {
                         )}
                       </span>
                     </div>
+
+                    {/* Actions (Owner only) */}
+                    {userId === reel.user_id && (
+                      <div className="mt-3 pt-2 border-t border-neutral-100 flex justify-end">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            handleDelete(reel.id);
+                          }}
+                          className="h-7 px-2 text-[10px] font-medium text-red-500 hover:text-red-600 hover:bg-red-50 gap-1.5 rounded-md"
+                        >
+                          <Trash2 className="size-3" />
+                          Delete Reel
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 </div>
               </a>

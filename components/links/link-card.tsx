@@ -66,17 +66,6 @@ export function LinkCard({ item, isOwner = false, isAdmin = false }: Props) {
     <>
       <div className="group relative flex flex-col bg-white border border-neutral-200 rounded-xl p-5 hover:border-neutral-300 hover:shadow-sm transition-all duration-150">
 
-        {/* Delete button — top-right, only for owner/admin */}
-        {(isOwner || isAdmin) && (
-          <button
-            onClick={(e) => { e.preventDefault(); setShowDeleteDialog(true) }}
-            disabled={isDeleting}
-            className="absolute top-3 right-3 p-1.5 rounded-md text-neutral-300 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all duration-150"
-          >
-            <Trash2 className="size-3.5" />
-          </button>
-        )}
-
         {/* Top row: icon + name */}
         <div className="flex items-center gap-3 mb-3">
           <div className="size-9 rounded-lg bg-neutral-100 overflow-hidden shrink-0 flex items-center justify-center">
@@ -140,6 +129,26 @@ export function LinkCard({ item, isOwner = false, isAdmin = false }: Props) {
             <ExternalLink className="size-3" />
           </Link>
         </div>
+
+        {/* Actions (Owner/Admin only) */}
+        {(isOwner || isAdmin) && (
+          <div className="mt-4 pt-3 border-t border-neutral-100 flex justify-end">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                setShowDeleteDialog(true)
+              }}
+              disabled={isDeleting}
+              className="h-7 px-2.5 text-[10px] font-medium text-red-500 hover:text-red-600 hover:bg-red-50 gap-1.5 rounded-md"
+            >
+              <Trash2 className="size-3.5" />
+              Delete Listing
+            </Button>
+          </div>
+        )}
       </div>
 
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
